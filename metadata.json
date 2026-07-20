@@ -1,0 +1,6 @@
+{
+  "name": "BookFlow Pro",
+  "description": "نظام إدارة المطبوعات والمبيعات المتكامل لدار النشر والمكتبة",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
