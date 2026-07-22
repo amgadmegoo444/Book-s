@@ -6,6 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { DatabaseState, saveDatabase } from '../dbStore';
 import { PrinterId, PrintJob, Printer } from '../types';
+import { isDesktopApp } from '../api/electron';
 import { Play, Printer as PrinterIcon, History, AlertCircle, RefreshCw, FileText, Settings, Sparkles } from 'lucide-react';
 
 interface PrintingCenterProps {
@@ -133,7 +134,7 @@ export default function PrintingCenter({ db, setDb }: PrintingCenterProps) {
   }, [db, setDb]);
 
   // Handle triggering a new print job
-  const handlePrintSubmit = (e: React.FormEvent) => {
+  const handlePrintSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedBookId) {
       alert('الرجاء اختيار الكتاب المراد طباعته من مستودع الملفات أولاً');
@@ -157,13 +158,16 @@ export default function PrintingCenter({ db, setDb }: PrintingCenterProps) {
       createdAt: new Date().toISOString()
     };
 
-    const newState = {
-      ...db,
-      printHistory: [newJob, ...db.printHistory]
-    };
-
-    setDb(newState);
-    saveDatabase(newState);
+    try {
+      const savedJob = isDesktopApp() ? await window.electron!.printing.queue(newJob) : newJob;
+      const newState = { ...db, printHistory: [savedJob, ...db.printHistory] };
+      setDb(newState);
+      if (!isDesktopApp()) saveDatabase(newState);
+    } catch (error) {
+      console.error('Unable to queue print job:', error);
+      alert('تعذر إضافة أمر الطباعة إلى قاعدة البيانات.');
+      return;
+    }
     alert(`تم إرسال أمر الطباعة بنجاح إلى طابور طابعة ${selectedPrinterId}. ستبدأ الطباعة تلقائياً.`);
   };
 

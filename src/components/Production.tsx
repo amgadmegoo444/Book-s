@@ -6,6 +6,7 @@
 import React, { useState } from 'react';
 import { DatabaseState, saveDatabase } from '../dbStore';
 import { Book } from '../types';
+import { isDesktopApp } from '../api/electron';
 import { Play, ClipboardList, AlertCircle, RefreshCw, Layers, CheckSquare, Plus, ArrowUpRight } from 'lucide-react';
 
 interface ProductionProps {
@@ -68,10 +69,31 @@ export default function Production({ db, setDb, setActiveTab }: ProductionProps)
     };
   });
 
-  const handleLogProduction = (e: React.FormEvent) => {
+  const handleLogProduction = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedBookId) {
       alert('الرجاء اختيار الكتاب أولاً');
+      return;
+    }
+
+    if (isDesktopApp()) {
+      try {
+        const result = await window.electron!.production.log({
+          id: `prod-${Date.now()}`, bookId: selectedBookId, quantity: Number(printedQtyInput),
+          rejectedQuantity: Number(rejectedQtyInput), employeeId: db.activeEmployeeId, createdAt: new Date().toISOString()
+        });
+        setDb({
+          ...db,
+          books: db.books.map((book) => book.id === result.book.id ? result.book : book),
+          printHistory: [result.job, ...db.printHistory]
+        });
+        setPrintedQtyInput(50);
+        setRejectedQtyInput(0);
+        alert('تم تسجيل الإنتاج في قاعدة البيانات بنجاح.');
+      } catch (error) {
+        console.error('Unable to log production:', error);
+        alert('تعذر تسجيل الإنتاج.');
+      }
       return;
     }
 

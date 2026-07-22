@@ -6,6 +6,7 @@
 import React, { useState } from 'react';
 import { DatabaseState, saveDatabase } from '../dbStore';
 import { Employee } from '../types';
+import { isDesktopApp } from '../api/electron';
 import { Users, Search, Plus, Trash2, Edit3, ShieldAlert, CheckCircle2 } from 'lucide-react';
 
 interface EmployeesProps {
@@ -29,37 +30,27 @@ export default function Employees({ db, setDb }: EmployeesProps) {
     emp.phone.includes(searchTerm)
   );
 
-  const handleAddEmployee = (e: React.FormEvent) => {
+  const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name || !phone) return;
 
-    let updatedEmployees = [...db.employees];
-
-    if (editingEmpId) {
-      updatedEmployees = updatedEmployees.map(emp => {
-        if (emp.id === editingEmpId) {
-          return { ...emp, name, role, phone };
-        }
-        return emp;
-      });
+    const employee: Employee = { id: editingEmpId ?? `emp-${Date.now()}`, name, role, phone };
+    try {
+      const saved = isDesktopApp()
+        ? await (editingEmpId ? window.electron!.employees.update(employee) : window.electron!.employees.create(employee))
+        : employee;
+      const updatedEmployees = editingEmpId
+        ? db.employees.map((item) => item.id === saved.id ? saved : item)
+        : [...db.employees, saved];
+      const newState = { ...db, employees: updatedEmployees };
+      setDb(newState);
+      if (!isDesktopApp()) saveDatabase(newState);
       setEditingEmpId(null);
-    } else {
-      const newEmp: Employee = {
-        id: `emp-${Date.now()}`,
-        name,
-        role,
-        phone
-      };
-      updatedEmployees.push(newEmp);
+    } catch (error) {
+      console.error('Unable to save employee:', error);
+      alert('تعذر حفظ بيانات الموظف.');
+      return;
     }
-
-    const newState = {
-      ...db,
-      employees: updatedEmployees
-    };
-
-    setDb(newState);
-    saveDatabase(newState);
 
     // Reset Form
     setName('');
@@ -77,18 +68,21 @@ export default function Employees({ db, setDb }: EmployeesProps) {
     setShowAddForm(true);
   };
 
-  const handleDeleteEmployee = (id: string) => {
+  const handleDeleteEmployee = async (id: string) => {
     if (id === db.activeEmployeeId) {
       alert('لا يمكنك حذف الموظف النشط حالياً في الجلسة المحاكاة!');
       return;
     }
     if (confirm('هل ترغب بتأكيد حذف هذا الموظف من قاعدة البيانات؟')) {
-      const newState = {
-        ...db,
-        employees: db.employees.filter(emp => emp.id !== id)
-      };
-      setDb(newState);
-      saveDatabase(newState);
+      try {
+        if (isDesktopApp()) await window.electron!.employees.remove(id);
+        const newState = { ...db, employees: db.employees.filter(emp => emp.id !== id) };
+        setDb(newState);
+        if (!isDesktopApp()) saveDatabase(newState);
+      } catch (error) {
+        console.error('Unable to delete employee:', error);
+        alert('تعذر حذف الموظف.');
+      }
     }
   };
 

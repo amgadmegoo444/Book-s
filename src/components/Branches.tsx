@@ -6,6 +6,7 @@
 import React, { useState } from 'react';
 import { DatabaseState, saveDatabase } from '../dbStore';
 import { Branch } from '../types';
+import { isDesktopApp } from '../api/electron';
 import { Building2, Search, Plus, DollarSign, Edit3, Trash2, ArrowDownLeft, Wallet, TrendingUp } from 'lucide-react';
 
 interface BranchesProps {
@@ -35,7 +36,7 @@ export default function Branches({ db, setDb }: BranchesProps) {
     br.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleAddBranch = (e: React.FormEvent) => {
+  const handleAddBranch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!branchName) return;
 
@@ -46,20 +47,23 @@ export default function Branches({ db, setDb }: BranchesProps) {
       debt: Number(initialDebt)
     };
 
-    const newState = {
-      ...db,
-      branches: [...db.branches, newBranch]
-    };
-
-    setDb(newState);
-    saveDatabase(newState);
+    try {
+      const saved = isDesktopApp() ? await window.electron!.branches.create(newBranch) : newBranch;
+      const newState = { ...db, branches: [...db.branches, saved] };
+      setDb(newState);
+      if (!isDesktopApp()) saveDatabase(newState);
+    } catch (error) {
+      console.error('Unable to save branch:', error);
+      alert('تعذر حفظ بيانات الفرع.');
+      return;
+    }
     setBranchName('');
     setInitialDebt(0);
     setShowAddForm(false);
     alert('تم إدراج بيانات الفرع/عميل الجملة الجديد بنجاح!');
   };
 
-  const handlePayDebt = (e: React.FormEvent) => {
+  const handlePayDebt = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!payDebtBranchId || debtPaymentAmount <= 0) return;
 
@@ -86,26 +90,39 @@ export default function Branches({ db, setDb }: BranchesProps) {
       branches: updatedBranches
     };
 
-    setDb(newState);
-    saveDatabase(newState);
+    try {
+      if (isDesktopApp()) {
+        const changed = updatedBranches.find((item) => item.id === payDebtBranchId)!;
+        await window.electron!.branches.update(changed);
+      }
+      setDb(newState);
+      if (!isDesktopApp()) saveDatabase(newState);
+    } catch (error) {
+      console.error('Unable to update branch debt:', error);
+      alert('تعذر تحديث مديونية الفرع.');
+      return;
+    }
     setPayDebtBranchId(null);
     setDebtPaymentAmount(0);
     alert(`تم إثبات تحصيل مبلغ ${actualPay} ج.م من مديونية الفرع بنجاح وتحديث كشف الحساب.`);
   };
 
-  const handleDeleteBranch = (id: string) => {
+  const handleDeleteBranch = async (id: string) => {
     const branch = db.branches.find(b => b.id === id);
     if (branch && branch.type === 'main') {
       alert('لا يمكن حذف الفرع التمويني الرئيسي للنظام!');
       return;
     }
     if (confirm('هل أنت متأكد من حذف هذا الفرع من السجلات؟')) {
-      const newState = {
-        ...db,
-        branches: db.branches.filter(b => b.id !== id)
-      };
-      setDb(newState);
-      saveDatabase(newState);
+      try {
+        if (isDesktopApp()) await window.electron!.branches.remove(id);
+        const newState = { ...db, branches: db.branches.filter(b => b.id !== id) };
+        setDb(newState);
+        if (!isDesktopApp()) saveDatabase(newState);
+      } catch (error) {
+        console.error('Unable to delete branch:', error);
+        alert('تعذر حذف الفرع.');
+      }
     }
   };
 

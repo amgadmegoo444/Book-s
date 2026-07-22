@@ -6,6 +6,7 @@
 import React, { useState } from 'react';
 import { DatabaseState, saveDatabase } from '../dbStore';
 import { Book } from '../types';
+import { isDesktopApp } from '../api/electron';
 import { Search, Plus, Filter, Edit, Trash2, CheckCircle2, AlertCircle, FileText, X } from 'lucide-react';
 
 interface BooksManagementProps {
@@ -71,16 +72,21 @@ export default function BooksManagement({ db, setDb }: BooksManagementProps) {
     setIsModalOpen(true);
   };
 
-  const handleDeleteBook = (id: string) => {
+  const handleDeleteBook = async (id: string) => {
     if (confirm('هل أنت متأكد من رغبتك في حذف هذا الكتاب نهائياً من النظام؟ قد يؤثر هذا على السجلات المرتبطة.')) {
-      const updatedBooks = db.books.filter(b => b.id !== id);
-      const newState = { ...db, books: updatedBooks };
-      setDb(newState);
-      saveDatabase(newState);
+      try {
+        if (isDesktopApp()) await window.electron!.books.remove(id);
+        const newState = { ...db, books: db.books.filter(b => b.id !== id) };
+        setDb(newState);
+        if (!isDesktopApp()) saveDatabase(newState);
+      } catch (error) {
+        console.error('Unable to delete book:', error);
+        alert('تعذر حذف الكتاب من قاعدة البيانات.');
+      }
     }
   };
 
-  const handleSaveBook = (e: React.FormEvent) => {
+  const handleSaveBook = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!series || !subject || !grade || !term) {
@@ -88,52 +94,27 @@ export default function BooksManagement({ db, setDb }: BooksManagementProps) {
       return;
     }
 
-    let updatedBooks = [...db.books];
-
-    if (editingBook) {
-      // Edit
-      updatedBooks = updatedBooks.map(b => {
-        if (b.id === editingBook.id) {
-          return {
-            ...b,
-            series,
-            subject,
-            stage,
-            grade,
-            term,
-            customerPrice: Number(customerPrice),
-            branchPrice: Number(branchPrice),
-            wholesalePrice: Number(wholesalePrice),
-            pdfPath,
-            quantityPrinted: Number(quantityPrinted)
-          };
-        }
-        return b;
-      });
-    } else {
-      // Add New
-      const newBook: Book = {
-        id: `book-${Date.now()}`,
-        series,
-        subject,
-        stage,
-        grade,
-        term,
-        customerPrice: Number(customerPrice),
-        branchPrice: Number(branchPrice),
-        wholesalePrice: Number(wholesalePrice),
-        pdfPath,
-        printingStatus: 'idle',
-        quantityPrinted: Number(quantityPrinted)
-      };
-      updatedBooks.push(newBook);
+    const book: Book = {
+      id: editingBook?.id ?? `book-${Date.now()}`, series, subject, stage, grade, term,
+      customerPrice: Number(customerPrice), branchPrice: Number(branchPrice), wholesalePrice: Number(wholesalePrice),
+      pdfPath, printingStatus: editingBook?.printingStatus ?? 'idle', quantityPrinted: Number(quantityPrinted)
+    };
+    try {
+      const savedBook = isDesktopApp()
+        ? await (editingBook ? window.electron!.books.update(book) : window.electron!.books.create(book))
+        : book;
+      const updatedBooks = editingBook
+        ? db.books.map((item) => item.id === savedBook.id ? savedBook : item)
+        : [...db.books, savedBook];
+      const newState = { ...db, books: updatedBooks };
+      setDb(newState);
+      if (!isDesktopApp()) saveDatabase(newState);
+      setIsModalOpen(false);
+      resetForm();
+    } catch (error) {
+      console.error('Unable to save book:', error);
+      alert('تعذر حفظ الكتاب في قاعدة البيانات.');
     }
-
-    const newState = { ...db, books: updatedBooks };
-    setDb(newState);
-    saveDatabase(newState);
-    setIsModalOpen(false);
-    resetForm();
   };
 
   // Filter & Search Logic

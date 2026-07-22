@@ -5,6 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import { loadDatabase, DatabaseState, saveDatabase } from './dbStore';
+import { isDesktopApp } from './api/electron';
 
 // Component imports
 import Dashboard from './components/Dashboard';
@@ -43,10 +44,17 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [time, setTime] = useState<string>('');
 
-  // Synchronous initial load of simulated SQL database
   useEffect(() => {
     const loadedDb = loadDatabase();
     setDb(loadedDb);
+
+    // SQLite is the source of truth in the packaged desktop application.
+    // Keeping the local fallback means the design can still be previewed in a browser.
+    if (isDesktopApp()) {
+      Promise.all([window.electron!.books.list(), window.electron!.branches.list(), window.electron!.employees.list(), window.electron!.reservations.list(), window.electron!.printing.list()])
+        .then(([books, branches, employees, reservations, printHistory]) => setDb((current) => current ? { ...current, books, branches, employees, reservations, printHistory } : current))
+        .catch((error) => console.error('Unable to load data from SQLite:', error));
+    }
 
     // Keep clock in sync
     const updateTime = () => {
@@ -58,10 +66,9 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // Sync state handler to keep database save transparent
   const handleUpdateDb = (newDb: DatabaseState) => {
     setDb(newDb);
-    saveDatabase(newDb);
+    if (!isDesktopApp()) saveDatabase(newDb);
   };
 
   if (!db) {

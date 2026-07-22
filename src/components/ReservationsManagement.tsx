@@ -6,6 +6,7 @@
 import React, { useState } from 'react';
 import { DatabaseState, saveDatabase, generateInvoiceNumber } from '../dbStore';
 import { Reservation, ReservationItem, ReservationStatus } from '../types';
+import { isDesktopApp } from '../api/electron';
 import { Search, Plus, Calendar, FileText, CheckCircle2, AlertTriangle, AlertCircle, X, DollarSign, Truck, RotateCcw, Printer, Edit2, Trash2 } from 'lucide-react';
 
 interface ReservationsManagementProps {
@@ -95,7 +96,7 @@ export default function ReservationsManagement({ db, setDb }: ReservationsManage
   const formRemaining = Math.max(0, formNetAmount - Number(deposit));
 
   // Save Reservation
-  const handleSaveReservation = (e: React.FormEvent) => {
+  const handleSaveReservation = async (e: React.FormEvent) => {
     e.preventDefault();
     if (formItems.length === 0) {
       alert('يجب إضافة كتاب واحد على الأقل لإتمام عملية الحجز');
@@ -128,7 +129,7 @@ export default function ReservationsManagement({ db, setDb }: ReservationsManage
       customerName,
       customerPhone,
       customerType,
-      branchId: customerType === 'regular' ? 'br-main' : branchId,
+      branchId: customerType === 'regular' ? 'br-main' : (customerType === 'wholesale' ? 'br-wholesale-hoda' : branchId),
       employeeId: db.activeEmployeeId,
       items,
       totalAmount: formSubtotal,
@@ -142,33 +143,52 @@ export default function ReservationsManagement({ db, setDb }: ReservationsManage
       updatedAt: new Date().toISOString()
     };
 
-    // If client is a branch or wholesale, let's update their debt accordingly if there is a remaining balance
-    let updatedBranches = [...db.branches];
-    if (customerType !== 'regular' && formRemaining > 0) {
-      const targetBranchId = customerType === 'branch' ? branchId : 'br-wholesale-hoda';
-      updatedBranches = updatedBranches.map(br => {
-        if (br.id === targetBranchId) {
-          return { ...br, debt: br.debt + formRemaining };
+    try {
+      if (isDesktopApp()) {
+        const result = await window.electron!.reservations.create(newReservation);
+        const branches = result.branch
+          ? db.branches.map((branch) => branch.id === result.branch!.id ? result.branch! : branch)
+          : db.branches;
+        setDb({ ...db, reservations: [result.reservation, ...db.reservations], branches });
+      } else {
+        let updatedBranches = [...db.branches];
+        if (customerType !== 'regular' && formRemaining > 0) {
+          updatedBranches = updatedBranches.map((branch) => branch.id === newReservation.branchId
+            ? { ...branch, debt: branch.debt + formRemaining } : branch);
         }
-        return br;
-      });
+        const newState = { ...db, reservations: [newReservation, ...db.reservations], branches: updatedBranches };
+        setDb(newState);
+        saveDatabase(newState);
+      }
+      setIsAddModalOpen(false);
+      resetForm();
+    } catch (error) {
+      console.error('Unable to create reservation:', error);
+      alert('تعذر حفظ الحجز في قاعدة البيانات.');
     }
-
-    const newState = {
-      ...db,
-      reservations: [newReservation, ...db.reservations],
-      branches: updatedBranches
-    };
-
-    setDb(newState);
-    saveDatabase(newState);
-    setIsAddModalOpen(false);
-    resetForm();
   };
 
   // Manage existing reservation actions
-  const handleRecordPayment = () => {
+  const handleRecordPayment = async () => {
     if (!selectedRes || paymentAmount <= 0) return;
+
+    if (isDesktopApp()) {
+      try {
+        const result = await window.electron!.reservations.recordPayment({
+          reservationId: selectedRes.id, amount: paymentAmount, employeeId: db.activeEmployeeId, createdAt: new Date().toISOString()
+        });
+        const reservations = db.reservations.map((item) => item.id === result.reservation.id ? result.reservation : item);
+        const branches = result.branch ? db.branches.map((item) => item.id === result.branch!.id ? result.branch! : item) : db.branches;
+        setDb({ ...db, reservations, branches });
+        setSelectedRes(result.reservation);
+        setPaymentAmount(0);
+        alert('تم تسجيل الدفعة وتحديث الحسابات بنجاح.');
+      } catch (error) {
+        console.error('Unable to record payment:', error);
+        alert('تعذر تسجيل الدفعة.');
+      }
+      return;
+    }
 
     const updatedRes = db.reservations.map(r => {
       if (r.id === selectedRes.id) {
@@ -204,8 +224,24 @@ export default function ReservationsManagement({ db, setDb }: ReservationsManage
     alert('تم تسجيل الدفعة المالية بنجاح وتحديث حسابات الفواتير والمديونية!');
   };
 
-  const handleProcessDelivery = () => {
+  const handleProcessDelivery = async () => {
     if (!selectedRes) return;
+
+    if (isDesktopApp()) {
+      try {
+        const saved = await window.electron!.reservations.deliver({
+          reservationId: selectedRes.id, deliveries: deliveryInputs, employeeId: db.activeEmployeeId, updatedAt: new Date().toISOString()
+        });
+        setDb({ ...db, reservations: db.reservations.map((item) => item.id === saved.id ? saved : item) });
+        setSelectedRes(saved);
+        setDeliveryInputs({});
+        alert('تم إثبات تسليم الكتب بنجاح.');
+      } catch (error) {
+        console.error('Unable to process delivery:', error);
+        alert('تعذر حفظ عملية التسليم. أدخل كمية صالحة أولاً.');
+      }
+      return;
+    }
 
     let totalDeliveredItemsChange = false;
 
@@ -257,8 +293,26 @@ export default function ReservationsManagement({ db, setDb }: ReservationsManage
     alert('تم إثبات تسليم الكتب المحددة جزئياً للعميل بنجاح!');
   };
 
-  const handleProcessReturn = () => {
+  const handleProcessReturn = async () => {
     if (!selectedRes) return;
+
+    if (isDesktopApp()) {
+      try {
+        const result = await window.electron!.reservations.processReturn({
+          reservationId: selectedRes.id, returns: returnInputs, updatedAt: new Date().toISOString()
+        });
+        const reservations = db.reservations.map((item) => item.id === result.reservation.id ? result.reservation : item);
+        const branches = result.branch ? db.branches.map((item) => item.id === result.branch!.id ? result.branch! : item) : db.branches;
+        setDb({ ...db, reservations, branches });
+        setSelectedRes(result.reservation);
+        setReturnInputs({});
+        alert('تم تسجيل المرتجع وتحديث الفاتورة بنجاح.');
+      } catch (error) {
+        console.error('Unable to process return:', error);
+        alert('تعذر حفظ المرتجع. تحقق من الكميات المسلّمة.');
+      }
+      return;
+    }
 
     let returnExecuted = false;
     let totalReturnCredit = 0;
@@ -324,10 +378,25 @@ export default function ReservationsManagement({ db, setDb }: ReservationsManage
     alert(`تم تسجيل إرجاع الكتب بنجاح. قيمة المرتجعات المستردة: ${totalReturnCredit} ج.م وتم تعديل الفاتورة ومديونيات العميل.`);
   };
 
-  const handleCancelReservation = (resId: string) => {
+  const handleCancelReservation = async (resId: string) => {
     if (confirm('هل أنت متأكد من إلغاء هذا الحجز بالكامل؟ سيتم تصفير المبالغ المتبقية وإرجاع ديون الفرع المرتبطة.')) {
       const reservation = db.reservations.find(r => r.id === resId);
       if (!reservation) return;
+
+      if (isDesktopApp()) {
+        try {
+          const result = await window.electron!.reservations.cancel({ reservationId: resId, updatedAt: new Date().toISOString() });
+          const reservations = db.reservations.map((item) => item.id === result.reservation.id ? result.reservation : item);
+          const branches = result.branch ? db.branches.map((item) => item.id === result.branch!.id ? result.branch! : item) : db.branches;
+          setDb({ ...db, reservations, branches });
+          setSelectedRes(result.reservation);
+          alert('تم إلغاء الحجز وتصفية المديونية المرتبطة.');
+        } catch (error) {
+          console.error('Unable to cancel reservation:', error);
+          alert('تعذر إلغاء الحجز.');
+        }
+        return;
+      }
 
       const updatedRes = db.reservations.map(r => {
         if (r.id === resId) {
