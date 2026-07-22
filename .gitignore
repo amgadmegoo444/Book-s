@@ -1,8 +1,20 @@
-node_modules/
-build/
+# Build
+release/
 dist/
-coverage/
+
+# Electron
+*.db
+*.sqlite
+
+# Dependencies
+node_modules/
+
+# Logs
+npm-debug.log*
+
+# Environment
+.env
+
+# OS
 .DS_Store
-*.log
-.env*
-!.env.example
+Thumbs.db
